@@ -23,9 +23,8 @@ def cargar_datos():
     try:
         df = conn.query("SELECT * FROM historial", ttl=0)
         return df
-    except Exception as e:
-        # Si da un error que NO sea porque la tabla está vacía, queremos verlo
-        st.sidebar.error(f"Error de conexión a la base de datos: {e}")
+    except Exception:
+        # Silenciamos el error. Si la tabla no existe, simplemente devolvemos la estructura vacía
         return pd.DataFrame(columns=[
             'Fecha', 'Motogenerador', 'Motor', 'Responsable',
             'P_kW', 'P_V_Nom', 'P_I_Nom', 'P_RPM',
