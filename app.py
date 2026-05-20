@@ -18,12 +18,14 @@ st.markdown("""
 # --- CONEXIÓN A SUPABASE (SQL) ---
 conn = st.connection("sql")
 
+# --- MODIFICA TU FUNCIÓN DE CARGAR DATOS ---
 def cargar_datos():
     try:
         df = conn.query("SELECT * FROM historial", ttl=0)
         return df
-    except Exception:
-        # Si la tabla no existe aún, devuelve la estructura vacía
+    except Exception as e:
+        # Si da un error que NO sea porque la tabla está vacía, queremos verlo
+        st.sidebar.error(f"Error de conexión a la base de datos: {e}")
         return pd.DataFrame(columns=[
             'Fecha', 'Motogenerador', 'Motor', 'Responsable',
             'P_kW', 'P_V_Nom', 'P_I_Nom', 'P_RPM',
@@ -32,12 +34,14 @@ def cargar_datos():
             'Vib_LA', 'Temp_C', 'Alarma_General', 'Observaciones'
         ])
 
+# --- MODIFICA TU FUNCIÓN DE GUARDAR EN LA NUBE ---
 def guardar_en_nube(nuevo_df):
     try:
         nuevo_df.to_sql("historial", con=conn.engine, if_exists="append", index=False)
-        st.success("¡Registro guardado exitosamente en la base de datos!")
+        return True # Retorna True si se guardó con éxito
     except Exception as e:
-        st.error(f"Error al guardar en la nube: {e}")
+        st.error(f"❌ ERROR REAL DE SUPABASE: {e}")
+        return False # Retorna False si falló
 
 # Carga inicial a la memoria
 if 'local_db' not in st.session_state:
@@ -110,6 +114,7 @@ if menu == "📝 Nueva Inspección":
             f_temp = st.number_input("Temperatura (°C)", step=1.0)
             f_obs = st.text_area("Observaciones")
 
+# --- MODIFICA EL BLOQUE DEL BOTÓN ---
         if st.form_submit_button("💾 GUARDAR REGISTRO", use_container_width=True):
             v_prom, v_desb = calcular_desbalance(f_v1, f_v2, f_v3)
             i_prom, i_desb = calcular_desbalance(f_i1, f_i2, f_i3)
@@ -118,8 +123,9 @@ if menu == "📝 Nueva Inspección":
             if i_desb > 10 or f_vib > 4.5 or v_desb > 3: alarma = "CRÍTICO 🚨"
             elif i_desb > 5 or f_vib > 2.8 or v_desb > 1: alarma = "ALERTA ⚠️"
 
+            # Nota: Convertimos la fecha a texto (string) para evitar errores de tipo en PostgreSQL
             nuevo_reg = {
-                'Fecha': f_fecha, 'Motogenerador': f_mg, 'Motor': f_motor, 'Responsable': f_resp,
+                'Fecha': f_fecha.strftime('%Y-%m-%d'), 'Motogenerador': f_mg, 'Motor': f_motor, 'Responsable': f_resp,
                 'P_kW': f_p_kw, 'P_V_Nom': f_p_v, 'P_I_Nom': f_p_i, 'P_RPM': f_p_rpm,
                 'V1': f_v1, 'V2': f_v2, 'V3': f_v3, 'V_Prom': v_prom, 'V_Desb_%': v_desb,
                 'I1': f_i1, 'I2': f_i2, 'I3': f_i3, 'I_Prom': i_prom, 'I_Desb_%': i_desb,
@@ -128,12 +134,17 @@ if menu == "📝 Nueva Inspección":
             
             nuevo_df = pd.DataFrame([nuevo_reg])
             
-            # Guardar en base de datos SQL
-            guardar_en_nube(nuevo_df)
+            # 1. Intentamos guardar en la nube primero
+            se_guardo_en_nube = guardar_en_nube(nuevo_df)
             
-            # Actualizar la tabla local para no tener que recargar desde la nube inmediatamente
-            st.session_state.local_db = pd.concat([st.session_state.local_db, nuevo_df], ignore_index=True)
-            st.rerun()
+            # 2. SOLO si Supabase lo aceptó, actualizamos la app y reiniciamos
+            if se_guardo_en_nube:
+                st.session_state.local_db = pd.concat([st.session_state.local_db, nuevo_df], ignore_index=True)
+                st.success("¡Registro guardado exitosamente!")
+                st.rerun()
+            else:
+                # Si falló, la app se detiene aquí y podrás leer el recuadro rojo con el error de Supabase
+                st.warning("⚠️ El registro no se pudo guardar en la nube. Revisa el mensaje de error de arriba.")
 
 # -------------------------------------------------------------
 # MÓDULO: DASHBOARD
