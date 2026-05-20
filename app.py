@@ -154,6 +154,7 @@ elif menu == "📊 Dashboard":
     if df.empty:
         st.info("No hay datos registrados aún. Registra tu primera inspección para ver el panel.")
     else:
+        # --- FILTROS DE VISUALIZACIÓN ---
         c1, c2 = st.columns(2)
         f_mg = c1.multiselect("Filtrar Motogenerador", df['Motogenerador'].unique(), default=df['Motogenerador'].unique())
         f_motor = c2.selectbox("Filtrar Motor", ["Todos"] + list(df['Motor'].unique()))
@@ -174,6 +175,51 @@ elif menu == "📊 Dashboard":
             use_container_width=True
         )
 
+        # --- SECCIÓN NUEVA: DESCARGA DE REPORTES POR FECHA ---
+        st.divider()
+        st.subheader("📥 Descargar Reporte Diario")
+        
+        # Obtenemos las fechas únicas ordenadas de la más reciente a la más antigua
+        fechas_disponibles = sorted(df['Fecha'].unique(), reverse=True)
+        fecha_sel = st.selectbox("Seleccione la fecha para generar el reporte:", fechas_disponibles)
+        
+        if fecha_sel:
+            # Filtramos los datos únicamente de la fecha seleccionada
+            df_reporte = df[df['Fecha'] == fecha_sel]
+            
+            st.write(f"Se encontraron **{len(df_reporte)}** registros para el día **{fecha_sel}**.")
+            
+            # Columnas para colocar los botones lado a lado
+            col_csv, col_excel = st.columns(2)
+            
+            # Opción 1: Descargar en CSV
+            csv_data = df_reporte.to_csv(index=False).encode('utf-8')
+            col_csv.download_button(
+                label=f"📄 Descargar CSV ({fecha_sel})",
+                data=csv_data,
+                file_name=f"Reporte_Wartsila_{fecha_sel}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+            # Opción 2: Descargar en Excel (.xlsx)
+            import io
+            buffer = io.BytesIO()
+            try:
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_reporte.to_excel(writer, index=False, sheet_name=f"Datos_{fecha_sel}")
+                
+                col_excel.download_button(
+                    label=f"📊 Descargar Excel ({fecha_sel})",
+                    data=buffer.getvalue(),
+                    file_name=f"Reporte_Wartsila_{fecha_sel}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            except Exception as e:
+                col_excel.error("Error al generar archivo de Excel. Asegúrate de que 'openpyxl' esté en requirements.txt")
+
+        # --- GRÁFICAS DE TENDENCIAS ---
         st.divider()
         st.subheader("📈 Análisis de Tendencias y Límites")
         
