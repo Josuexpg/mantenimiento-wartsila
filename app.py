@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import io
 
 # Configuración de página
 st.set_page_config(page_title="Wärtsilä Maintenance Hub", layout="wide")
@@ -16,17 +15,33 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- LÓGICA DE DATOS ---
+# --- CONEXIÓN A SUPABASE (SQL) ---
+conn = st.connection("sql")
+
+def cargar_datos():
+    try:
+        df = conn.query("SELECT * FROM historial", ttl=0)
+        return df
+    except Exception:
+        # Si la tabla no existe aún, devuelve la estructura vacía
+        return pd.DataFrame(columns=[
+            'Fecha', 'Motogenerador', 'Motor', 'Responsable',
+            'P_kW', 'P_V_Nom', 'P_I_Nom', 'P_RPM',
+            'V1', 'V2', 'V3', 'V_Prom', 'V_Desb_%',
+            'I1', 'I2', 'I3', 'I_Prom', 'I_Desb_%',
+            'Vib_LA', 'Temp_C', 'Alarma_General', 'Observaciones'
+        ])
+
+def guardar_en_nube(nuevo_df):
+    try:
+        nuevo_df.to_sql("historial", con=conn.engine, if_exists="append", index=False)
+        st.success("¡Registro guardado exitosamente en la base de datos!")
+    except Exception as e:
+        st.error(f"Error al guardar en la nube: {e}")
+
+# Carga inicial a la memoria
 if 'local_db' not in st.session_state:
-    # Estructura con campos de Voltaje y Corriente
-    columnas = [
-        'Fecha', 'Motogenerador', 'Motor', 'Responsable',
-        'P_kW', 'P_V_Nom', 'P_I_Nom', 'P_RPM',
-        'V1', 'V2', 'V3', 'V_Prom', 'V_Desb_%',
-        'I1', 'I2', 'I3', 'I_Prom', 'I_Desb_%',
-        'Vib_LA', 'Temp_C', 'Alarma_General', 'Observaciones'
-    ]
-    st.session_state.local_db = pd.DataFrame(columns=columnas)
+    st.session_state.local_db = cargar_datos()
 
 def calcular_desbalance(val1, val2, val3):
     if val1 == 0 or val2 == 0 or val3 == 0: return 0.0, 0.0
@@ -46,68 +61,13 @@ with col_title:
 # --- SIDEBAR ---
 menu = st.sidebar.radio(
     "Navegación", 
-    ["📊 Dashboard", "📝 Nueva Inspección", "⚙️ Gestión de Datos", "📘 Info & Normativas"]
+    ["📊 Dashboard", "📝 Nueva Inspección", "📘 Info & Normativas"]
 )
-
-# -------------------------------------------------------------
-# MÓDULO: INFO & NORMATIVAS (NUEVO)
-# -------------------------------------------------------------
-if menu == "📘 Info & Normativas":
-    st.header("📘 Documentación Técnica y Guía de Uso")
-    
-    tab_info, tab_norm = st.tabs(["📖 Guía de Uso", "📐 Normativas y Fórmulas"])
-    
-    with tab_info:
-        st.subheader("Instrucciones de la Plataforma")
-        st.markdown("""
-        **1. Registrar una Nueva Inspección:**
-        * Dirígete a la pestaña **📝 Nueva Inspección**.
-        * Completa primero los **Datos de Placa** (Nominales) del motor para tener una referencia.
-        * Ingresa las mediciones reales capturadas en campo (Voltajes, Corrientes, Vibraciones).
-        * El sistema calculará automáticamente los desbalances y generará el estado de la alarma.
-        
-        **2. Visualizar el Dashboard:**
-        * En la sección **📊 Dashboard**, puedes filtrar los datos por Motogenerador o por Motor específico.
-        * Revisa la tabla resumen que codifica por colores el estado del equipo.
-        * Observa las gráficas de tendencias: las líneas punteadas te indicarán visualmente si los parámetros cruzan los límites normativos.
-        
-        **3. Corregir Errores:**
-        * Si ingresaste un dato incorrecto, ve a **⚙️ Gestión de Datos**, modifica la celda directamente y presiona 'Guardar Cambios'.
-        """)
-        
-    with tab_norm:
-        st.subheader("Criterios de Evaluación y Fórmulas")
-        
-        st.markdown("#### 1. Desbalance Eléctrico (Normativa NEMA MG1)")
-        st.info("Un desbalance de voltaje crea un desbalance de corriente exponencial (hasta de 6 a 10 veces mayor), lo que genera sobrecalentamiento crítico en los devanados del estator.")
-        st.latex(r"\text{Promedio} = \frac{L_1 + L_2 + L_3}{3}")
-        st.latex(r"\text{Desbalance (\%)} = \frac{\text{Máxima desviación del promedio}}{\text{Promedio}} \times 100")
-        
-        c_v, c_i = st.columns(2)
-        with c_v:
-            st.markdown("**Límites de Voltaje:**")
-            st.markdown("- **Normal:** $\le 1\%$")
-            st.markdown("- **Alerta ⚠️:** $> 1\%$ a $3\%$")
-            st.markdown("- **Crítico 🚨:** $> 3\%$ (Riesgo de daño)")
-        with c_i:
-            st.markdown("**Límites de Corriente:**")
-            st.markdown("- **Normal:** $\le 5\%$")
-            st.markdown("- **Alerta ⚠️:** $> 5\%$ a $10\%$")
-            st.markdown("- **Crítico 🚨:** $> 10\%$")
-            
-        st.divider()
-        
-        st.markdown("#### 2. Severidad Vibratoria (Normativa ISO 10816-3)")
-        st.info("Aplica para motores eléctricos industriales montados sobre bases rígidas. Se mide la velocidad de vibración global en RMS.")
-        st.markdown("**Límites (Máquinas Clase II - Medianos):**")
-        st.markdown("- **Normal (Verde):** $\le 2.8 \text{ mm/s RMS}$")
-        st.markdown("- **Alerta ⚠️ (Amarillo - Zona C):** $> 2.8 \text{ mm/s a } 4.5 \text{ mm/s RMS}$")
-        st.markdown("- **Crítico 🚨 (Rojo - Zona D):** $> 4.5 \text{ mm/s RMS}$ (Apagado recomendado)")
 
 # -------------------------------------------------------------
 # MÓDULO: NUEVA INSPECCIÓN
 # -------------------------------------------------------------
-elif menu == "📝 Nueva Inspección":
+if menu == "📝 Nueva Inspección":
     st.subheader("Registro de Datos Técnicos")
     
     with st.form("form_inspeccion"):
@@ -166,8 +126,13 @@ elif menu == "📝 Nueva Inspección":
                 'Vib_LA': f_vib, 'Temp_C': f_temp, 'Alarma_General': alarma, 'Observaciones': f_obs
             }
             
-            st.session_state.local_db = pd.concat([st.session_state.local_db, pd.DataFrame([nuevo_reg])], ignore_index=True)
-            st.success("Datos guardados correctamente.")
+            nuevo_df = pd.DataFrame([nuevo_reg])
+            
+            # Guardar en base de datos SQL
+            guardar_en_nube(nuevo_df)
+            
+            # Actualizar la tabla local para no tener que recargar desde la nube inmediatamente
+            st.session_state.local_db = pd.concat([st.session_state.local_db, nuevo_df], ignore_index=True)
             st.rerun()
 
 # -------------------------------------------------------------
@@ -177,7 +142,7 @@ elif menu == "📊 Dashboard":
     df = st.session_state.local_db
     
     if df.empty:
-        st.info("No hay datos registrados aún.")
+        st.info("No hay datos registrados aún. Registra tu primera inspección para ver el panel.")
     else:
         c1, c2 = st.columns(2)
         f_mg = c1.multiselect("Filtrar Motogenerador", df['Motogenerador'].unique(), default=df['Motogenerador'].unique())
@@ -209,7 +174,7 @@ elif menu == "📊 Dashboard":
             fig_i.add_trace(go.Scatter(x=df_f['Fecha'], y=df_f['I_Desb_%'], name="Desbalance I%", mode='lines+markers'))
             fig_i.add_hline(y=5, line_dash="dash", line_color="orange", annotation_text="Alerta (5%)")
             fig_i.add_hline(y=10, line_dash="dash", line_color="red", annotation_text="Crítico (10%)")
-            fig_i.update_layout(title="Desbalance de Corriente (%)", yaxis_range=[0, max(df_f['I_Desb_%'].max()+2, 12)])
+            fig_i.update_layout(title="Desbalance de Corriente (%)", yaxis_range=[0, max(df_f['I_Desb_%'].max()+2 if not df_f.empty else 12, 12)])
             st.plotly_chart(fig_i, use_container_width=True)
 
         with tab_v:
@@ -229,15 +194,34 @@ elif menu == "📊 Dashboard":
             st.plotly_chart(fig_vib, use_container_width=True)
 
 # -------------------------------------------------------------
-# MÓDULO: GESTIÓN
+# MÓDULO: INFO & NORMATIVAS
 # -------------------------------------------------------------
-elif menu == "⚙️ Gestión de Datos":
-    st.subheader("Edición de Historial")
-    edited_df = st.data_editor(st.session_state.local_db, num_rows="dynamic", use_container_width=True)
-    if st.button("Guardar Cambios"):
-        st.session_state.local_db = edited_df
-        st.success("Base de datos actualizada.")
+elif menu == "📘 Info & Normativas":
+    st.header("📘 Documentación Técnica y Guía de Uso")
+    tab_info, tab_norm = st.tabs(["📖 Guía de Uso", "📐 Normativas y Fórmulas"])
+    
+    with tab_info:
+        st.subheader("Instrucciones de la Plataforma")
+        st.markdown("""
+        **1. Registrar una Nueva Inspección:** Llena los datos de placa y las mediciones operativas.
+        **2. Visualizar el Dashboard:** Filtra por Motor y observa los umbrales de seguridad en las gráficas.
+        """)
+        
+    with tab_norm:
+        st.subheader("Criterios de Evaluación y Fórmulas")
+        st.markdown("#### 1. Desbalance Eléctrico (Normativa NEMA MG1)")
+        st.latex(r"\text{Desbalance (\%)} = \frac{\text{Máxima desviación del promedio}}{\text{Promedio}} \times 100")
+        
+        c_v, c_i = st.columns(2)
+        with c_v:
+            st.markdown("**Límites de Voltaje:**\n- **Normal:** $\le 1\%$\n- **Alerta ⚠️:** $> 1\%$ a $3\%$\n- **Crítico 🚨:** $> 3\%$")
+        with c_i:
+            st.markdown("**Límites de Corriente:**\n- **Normal:** $\le 5\%$\n- **Alerta ⚠️:** $> 5\%$ a $10\%$\n- **Crítico 🚨:** $> 10\%$")
+            
+        st.divider()
+        st.markdown("#### 2. Severidad Vibratoria (Normativa ISO 10816-3)")
+        st.markdown("**Límites (Máquinas Clase II):**\n- **Normal:** $\le 2.8 \text{ mm/s RMS}$\n- **Alerta ⚠️:** $> 2.8 \text{ mm/s a } 4.5 \text{ mm/s RMS}$\n- **Crítico 🚨:** $> 4.5 \text{ mm/s RMS}$")
 
 # Footer
 st.sidebar.markdown("---")
-st.sidebar.caption("Wärtsilä Ecuador Maintenance Hub v2.1")
+st.sidebar.caption("Wärtsilä Ecuador Maintenance Hub v3.0 (Supabase)")
