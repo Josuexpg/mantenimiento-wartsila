@@ -43,19 +43,29 @@ def guardar_en_nube(nuevo_df):
 
 def borrar_en_nube(motogenerador, motor, fecha):
     try:
-        # Borrado seguro por composición de llave (Fecha, MG, Motor)
+        # Importamos text directamente de sqlalchemy para cumplir con la nueva norma
+        from sqlalchemy import text
+        
         query = f"DELETE FROM historial WHERE \"Fecha\" = '{fecha}' AND \"Motogenerador\" = '{motogenerador}' AND \"Motor\" = '{motor}'"
+        
         with conn.engine.connect() as con:
-            con.execute(go.net.sql.text(query) if hasattr(go, 'net') else query) # Dependiendo de tu versión de sqlalchemy
+            # Envolvemos el query string con text() y ejecutamos
+            con.execute(text(query))
+            # Hacemos commit explícito para asegurar que los cambios se guarden en Supabase
+            con.commit()
         return True
     except Exception as e:
-        # Si falla SQL directo, intentamos mediante una query de texto normal de la conexión
+        st.error(f"❌ No se pudo borrar de la base de datos (Método Engine): {e}")
+        
+        # Intento de respaldo usando la sesión directa de Streamlit SQL connection
         try:
-            conn.session.execute(f"DELETE FROM historial WHERE \"Fecha\" = '{fecha}' AND \"Motogenerador\" = '{motogenerador}' AND \"Motor\" = '{motor}'")
+            from sqlalchemy import text
+            query_fallback = text(f"DELETE FROM historial WHERE \"Fecha\" = '{fecha}' AND \"Motogenerador\" = '{motogenerador}' AND \"Motor\" = '{motor}'")
+            conn.session.execute(query_fallback)
             conn.session.commit()
             return True
         except Exception as e2:
-            st.error(f"❌ No se pudo borrar de la base de datos: {e2}")
+            st.error(f"❌ Falló también el método de respaldo: {e2}")
             return False
 
 # Carga inicial a la memoria
